@@ -130,6 +130,7 @@ public abstract class TransportWriteAction<
             implements RespondingWriteResult {
         boolean finishedAsyncActions;
         public final Location location;
+        public final IndexShard primary;
         ActionListener<Response> listener = null;
 
         public WritePrimaryResult(ReplicaRequest request, @Nullable Response finalResponse,
@@ -137,6 +138,7 @@ public abstract class TransportWriteAction<
                                   IndexShard primary, Logger logger) {
             super(request, finalResponse, operationFailure);
             this.location = location;
+            this.primary = primary;
             assert location == null || operationFailure == null
                     : "expected either failure to be null or translog location to be null, " +
                     "but found: [" + location + "] translog location and [" + operationFailure + "] failure";
@@ -161,6 +163,7 @@ public abstract class TransportWriteAction<
          * Respond if the refresh has occurred and the listener is ready. Always called while synchronized on {@code this}.
          */
         protected void respondIfPossible(Exception ex) {
+            assert Thread.holdsLock(this);
             if (finishedAsyncActions && listener != null) {
                 if (ex == null) {
                     super.respond(listener);
@@ -186,7 +189,7 @@ public abstract class TransportWriteAction<
     /**
      * Result of taking the action on the replica.
      */
-    protected static class WriteReplicaResult<ReplicaRequest extends ReplicatedWriteRequest<ReplicaRequest>>
+    public static class WriteReplicaResult<ReplicaRequest extends ReplicatedWriteRequest<ReplicaRequest>>
             extends ReplicaResult implements RespondingWriteResult {
         public final Location location;
         boolean finishedAsyncActions;
@@ -204,7 +207,7 @@ public abstract class TransportWriteAction<
         }
 
         @Override
-        public void respond(ActionListener<TransportResponse.Empty> listener) {
+        public synchronized void respond(ActionListener<TransportResponse.Empty> listener) {
             this.listener = listener;
             respondIfPossible(null);
         }
@@ -213,6 +216,7 @@ public abstract class TransportWriteAction<
          * Respond if the refresh has occurred and the listener is ready. Always called while synchronized on {@code this}.
          */
         protected void respondIfPossible(Exception ex) {
+            assert Thread.holdsLock(this);
             if (finishedAsyncActions && listener != null) {
                 if (ex == null) {
                     super.respond(listener);
@@ -223,7 +227,7 @@ public abstract class TransportWriteAction<
         }
 
         @Override
-        public void onFailure(Exception ex) {
+        public synchronized void onFailure(Exception ex) {
             finishedAsyncActions = true;
             respondIfPossible(ex);
         }

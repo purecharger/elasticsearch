@@ -20,10 +20,12 @@
 package org.elasticsearch.index.rankeval;
 
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.common.ParsingException;
+import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
@@ -36,7 +38,7 @@ import org.elasticsearch.common.xcontent.XContentLocation;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.discovery.DiscoverySettings;
-import org.elasticsearch.index.Index;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchParseException;
 import org.elasticsearch.search.SearchShardTarget;
@@ -50,7 +52,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Predicate;
 
 import static java.util.Collections.singleton;
@@ -63,12 +65,12 @@ public class RankEvalResponseTests extends ESTestCase {
 
     private static final Exception[] RANDOM_EXCEPTIONS = new Exception[] {
             new ClusterBlockException(singleton(DiscoverySettings.NO_MASTER_BLOCK_WRITES)),
-            new CircuitBreakingException("Data too large", 123, 456),
+            new CircuitBreakingException("Data too large", 123, 456, CircuitBreaker.Durability.PERMANENT),
             new SearchParseException(new TestSearchContext(null), "Parse failure", new XContentLocation(12, 98)),
             new IllegalArgumentException("Closed resource", new RuntimeException("Resource")),
             new SearchPhaseExecutionException("search", "all shards failed",
                     new ShardSearchFailure[] { new ShardSearchFailure(new ParsingException(1, 2, "foobar", null),
-                            new SearchShardTarget("node_1", new Index("foo", "_na_"), 1, null)) }),
+                            new SearchShardTarget("node_1", new ShardId("foo", "_na_", 1), null, OriginalIndices.NONE)) }),
             new ElasticsearchException("Parsing failed",
                     new ParsingException(9, 42, "Wrong state", new NullPointerException("Unexpected null value"))) };
 
@@ -180,8 +182,8 @@ public class RankEvalResponseTests extends ESTestCase {
 
     private static RatedSearchHit searchHit(String index, int docId, Integer rating) {
         SearchHit hit = new SearchHit(docId, docId + "", new Text(""), Collections.emptyMap());
-        hit.shard(new SearchShardTarget("testnode", new Index(index, "uuid"), 0, null));
+        hit.shard(new SearchShardTarget("testnode", new ShardId(index, "uuid", 0), null, OriginalIndices.NONE));
         hit.score(1.0f);
-        return new RatedSearchHit(hit, rating != null ? Optional.of(rating) : Optional.empty());
+        return new RatedSearchHit(hit, rating != null ? OptionalInt.of(rating) : OptionalInt.empty());
     }
 }

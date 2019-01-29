@@ -20,16 +20,15 @@
 package org.elasticsearch.action.search;
 
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.TimestampParsingException;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContent;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.index.Index;
 import org.elasticsearch.index.shard.IndexShardClosedException;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.InvalidIndexTemplateException;
@@ -38,8 +37,6 @@ import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
 
-import static java.util.Collections.singletonMap;
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 
@@ -49,11 +46,11 @@ public class SearchPhaseExecutionExceptionTests extends ESTestCase {
         SearchPhaseExecutionException exception = new SearchPhaseExecutionException("test", "all shards failed",
                 new ShardSearchFailure[]{
                         new ShardSearchFailure(new ParsingException(1, 2, "foobar", null),
-                                new SearchShardTarget("node_1", new Index("foo", "_na_"), 0, null)),
-                        new ShardSearchFailure(new IndexShardClosedException(new ShardId(new Index("foo", "_na_"), 1)),
-                                new SearchShardTarget("node_2", new Index("foo", "_na_"), 1, null)),
+                                new SearchShardTarget("node_1", new ShardId("foo", "_na_", 0), null, OriginalIndices.NONE)),
+                        new ShardSearchFailure(new IndexShardClosedException(new ShardId("foo", "_na_", 1)),
+                                new SearchShardTarget("node_2", new ShardId("foo", "_na_", 1), null, OriginalIndices.NONE)),
                         new ShardSearchFailure(new ParsingException(5, 7, "foobar", null),
-                                new SearchShardTarget("node_3", new Index("foo", "_na_"), 2, null)),
+                                new SearchShardTarget("node_3", new ShardId("foo", "_na_", 2), null, OriginalIndices.NONE)),
                 });
 
         // Failures are grouped (by default)
@@ -87,56 +84,6 @@ public class SearchPhaseExecutionExceptionTests extends ESTestCase {
                             "}" +
                         "}" +
                 "]}", Strings.toString(exception));
-
-        // Failures are NOT grouped
-        ToXContent.MapParams params = new ToXContent.MapParams(singletonMap("group_shard_failures", "false"));
-        try (XContentBuilder builder = jsonBuilder()) {
-            builder.startObject();
-            exception.toXContent(builder, params);
-            builder.endObject();
-
-            assertEquals("{" +
-                    "\"type\":\"search_phase_execution_exception\"," +
-                    "\"reason\":\"all shards failed\"," +
-                    "\"phase\":\"test\"," +
-                    "\"grouped\":false," +
-                    "\"failed_shards\":[" +
-                            "{" +
-                                "\"shard\":0," +
-                                "\"index\":\"foo\"," +
-                                "\"node\":\"node_1\"," +
-                                "\"reason\":{" +
-                                            "\"type\":\"parsing_exception\"," +
-                                            "\"reason\":\"foobar\"," +
-                                            "\"line\":1," +
-                                            "\"col\":2" +
-                                "}" +
-                            "}," +
-                            "{" +
-                                "\"shard\":1," +
-                                "\"index\":\"foo\"," +
-                                "\"node\":\"node_2\"," +
-                                "\"reason\":{" +
-                                            "\"type\":\"index_shard_closed_exception\"," +
-                                            "\"reason\":\"CurrentState[CLOSED] Closed\"," +
-                                            "\"index_uuid\":\"_na_\"," +
-                                            "\"shard\":\"1\"," +
-                                            "\"index\":\"foo\"" +
-                                "}" +
-                            "}," +
-                            "{" +
-                                "\"shard\":2," +
-                                "\"index\":\"foo\"," +
-                                "\"node\":\"node_3\"," +
-                                "\"reason\":{" +
-                                            "\"type\":\"parsing_exception\"," +
-                                            "\"reason\":\"foobar\"," +
-                                            "\"line\":5," +
-                                            "\"col\":7" +
-                                "}" +
-                            "}" +
-                    "]}", Strings.toString(builder));
-        }
     }
 
     public void testToAndFromXContent() throws IOException {
@@ -150,7 +97,8 @@ public class SearchPhaseExecutionExceptionTests extends ESTestCase {
                     new TimestampParsingException("foo", null),
                     new NullPointerException()
             );
-            shardSearchFailures[i] = new  ShardSearchFailure(cause, new SearchShardTarget("node_" + i, new Index("test", "_na_"), i, null));
+            shardSearchFailures[i] = new  ShardSearchFailure(cause, new SearchShardTarget("node_" + i,
+                new ShardId("test", "_na_", i), null, OriginalIndices.NONE));
         }
 
         final String phase = randomFrom("query", "search", "other");

@@ -35,8 +35,6 @@ import org.elasticsearch.action.bulk.Retry;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.client.ParentTaskAssigningClient;
-import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
@@ -51,6 +49,7 @@ import org.elasticsearch.index.reindex.ScrollableHitSource.SearchFailure;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.script.UpdateScript;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.threadpool.ThreadPool;
 
@@ -89,7 +88,6 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
     protected final WorkerBulkByScrollTaskState worker;
     protected final ThreadPool threadPool;
     protected final ScriptService scriptService;
-    protected final ClusterState clusterState;
 
     /**
      * The request for this action. Named mainRequest because we create lots of <code>request</code> variables all representing child
@@ -104,7 +102,6 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
     private final ActionListener<BulkByScrollResponse> listener;
     private final Retry bulkRetry;
     private final ScrollableHitSource scrollSource;
-    private final Settings settings;
 
     /**
      * This BiFunction is used to apply various changes depending of the Reindex action and  the search hit,
@@ -113,15 +110,10 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
      */
     private final BiFunction<RequestWrapper<?>, ScrollableHitSource.Hit, RequestWrapper<?>> scriptApplier;
 
-    public AbstractAsyncBulkByScrollAction(BulkByScrollTask task, Logger logger, ParentTaskAssigningClient client,
+    public AbstractAsyncBulkByScrollAction(BulkByScrollTask task, boolean needsSourceDocumentVersions,
+                                           boolean needsSourceDocumentSeqNoAndPrimaryTerm, Logger logger, ParentTaskAssigningClient client,
                                            ThreadPool threadPool, Request mainRequest, ScriptService scriptService,
-                                           ClusterState clusterState, ActionListener<BulkByScrollResponse> listener) {
-        this(task, logger, client, threadPool, mainRequest, scriptService, clusterState, listener, client.settings());
-    }
-
-    public AbstractAsyncBulkByScrollAction(BulkByScrollTask task, Logger logger, ParentTaskAssigningClient client,
-            ThreadPool threadPool, Request mainRequest, ScriptService scriptService, ClusterState clusterState,
-            ActionListener<BulkByScrollResponse> listener, Settings settings) {
+                                           ActionListener<BulkByScrollResponse> listener) {
 
         this.task = task;
         if (!task.isWorker()) {
@@ -131,10 +123,8 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
 
         this.logger = logger;
         this.client = client;
-        this.settings = settings;
         this.threadPool = threadPool;
         this.scriptService = scriptService;
-        this.clusterState = clusterState;
         this.mainRequest = mainRequest;
         this.listener = listener;
         BackoffPolicy backoffPolicy = buildBackoffPolicy();
@@ -146,11 +136,13 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
          * them and if we add _doc as the first sort by default then sorts will never work.... So we add it here, only if there isn't
          * another sort.
          */
-        List<SortBuilder<?>> sorts = mainRequest.getSearchRequest().source().sorts();
+        final SearchSourceBuilder sourceBuilder = mainRequest.getSearchRequest().source();
+        List<SortBuilder<?>> sorts = sourceBuilder.sorts();
         if (sorts == null || sorts.isEmpty()) {
-            mainRequest.getSearchRequest().source().sort(fieldSort("_doc"));
+            sourceBuilder.sort(fieldSort("_doc"));
         }
-        mainRequest.getSearchRequest().source().version(needsSourceDocumentVersions());
+        sourceBuilder.version(needsSourceDocumentVersions);
+        sourceBuilder.seqNoAndPrimaryTerm(needsSourceDocumentSeqNoAndPrimaryTerm);
     }
 
     /**
@@ -162,12 +154,7 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
         // The default script applier executes a no-op
         return (request, searchHit) -> request;
     }
-
-    /**
-     * Does this operation need the versions of the source documents?
-     */
-    protected abstract boolean needsSourceDocumentVersions();
-
+    
     /**
      * Build the {@link RequestWrapper} for a single search hit. This shouldn't handle
      * metadata or scripting. That will be handled by copyMetadata and
@@ -357,7 +344,7 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
             public void onFailure(Exception e) {
                 finishHim(e);
             }
-        }, settings);
+        });
     }
 
     /**
@@ -746,9 +733,6 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
         private final Script script;
         private final Map<String, Object> params;
 
-        private UpdateScript executable;
-        private Map<String, Object> context;
-
         public ScriptApplier(WorkerBulkByScrollTaskState taskWorker,
                              ScriptService scriptService,
                              Script script,
@@ -765,16 +749,8 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
             if (script == null) {
                 return request;
             }
-            if (executable == null) {
-                UpdateScript.Factory factory = scriptService.compile(script, UpdateScript.CONTEXT);
-                executable = factory.newInstance(params);
-            }
-            if (context == null) {
-                context = new HashMap<>();
-            } else {
-                context.clear();
-            }
 
+            Map<String, Object> context = new HashMap<>();
             context.put(IndexFieldMapper.NAME, doc.getIndex());
             context.put(TypeFieldMapper.NAME, doc.getType());
             context.put(IdFieldMapper.NAME, doc.getId());
@@ -787,7 +763,9 @@ public abstract class AbstractAsyncBulkByScrollAction<Request extends AbstractBu
             OpType oldOpType = OpType.INDEX;
             context.put("op", oldOpType.toString());
 
-            executable.execute(context);
+            UpdateScript.Factory factory = scriptService.compile(script, UpdateScript.CONTEXT);
+            UpdateScript updateScript = factory.newInstance(params, context);
+            updateScript.execute();
 
             String newOp = (String) context.remove("op");
             if (newOp == null) {

@@ -7,7 +7,10 @@ package org.elasticsearch.xpack.ml.integration;
 
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchStatusException;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
+import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.xpack.core.ml.action.DeleteForecastAction;
 import org.elasticsearch.xpack.core.ml.job.config.AnalysisConfig;
 import org.elasticsearch.xpack.core.ml.job.config.AnalysisLimits;
 import org.elasticsearch.xpack.core.ml.job.config.DataDescription;
@@ -34,7 +37,7 @@ import static org.hamcrest.Matchers.equalTo;
 public class ForecastIT extends MlNativeAutodetectIntegTestCase {
 
     @After
-    public void tearDownData() throws Exception {
+    public void tearDownData() {
         cleanUp();
     }
 
@@ -139,7 +142,7 @@ public class ForecastIT extends MlNativeAutodetectIntegTestCase {
         }
     }
 
-    public void testDurationCannotBeLessThanBucketSpan() throws Exception {
+    public void testDurationCannotBeLessThanBucketSpan() {
         Detector.Builder detector = new Detector.Builder("mean", "value");
 
         TimeValue bucketSpan = TimeValue.timeValueHours(1);
@@ -160,7 +163,7 @@ public class ForecastIT extends MlNativeAutodetectIntegTestCase {
                 equalTo("[duration] must be greater or equal to the bucket span: [10m/1h]"));
     }
 
-    public void testNoData() throws Exception {
+    public void testNoData() {
         Detector.Builder detector = new Detector.Builder("mean", "value");
 
         TimeValue bucketSpan = TimeValue.timeValueMinutes(1);
@@ -276,24 +279,122 @@ public class ForecastIT extends MlNativeAutodetectIntegTestCase {
 
     }
 
+    public void testDelete() throws Exception {
+        Detector.Builder detector = new Detector.Builder("mean", "value");
+
+        TimeValue bucketSpan = TimeValue.timeValueHours(1);
+        AnalysisConfig.Builder analysisConfig = new AnalysisConfig.Builder(Collections.singletonList(detector.build()));
+        analysisConfig.setBucketSpan(bucketSpan);
+        DataDescription.Builder dataDescription = new DataDescription.Builder();
+        dataDescription.setTimeFormat("epoch");
+
+        Job.Builder job = new Job.Builder("forecast-it-test-delete");
+        job.setAnalysisConfig(analysisConfig);
+        job.setDataDescription(dataDescription);
+
+        registerJob(job);
+        putJob(job);
+        openJob(job.getId());
+
+        long now = Instant.now().getEpochSecond();
+        long timestamp = now - 50 * bucketSpan.seconds();
+        List<String> data = new ArrayList<>();
+        while (timestamp < now) {
+            data.add(createJsonRecord(createRecord(timestamp, 10.0)));
+            data.add(createJsonRecord(createRecord(timestamp, 30.0)));
+            timestamp += bucketSpan.seconds();
+        }
+
+        postData(job.getId(), data.stream().collect(Collectors.joining()));
+        flushJob(job.getId(), false);
+        String forecastIdDefaultDurationDefaultExpiry = forecast(job.getId(), null, null);
+        String forecastIdDuration1HourNoExpiry = forecast(job.getId(), TimeValue.timeValueHours(1), TimeValue.ZERO);
+        waitForecastToFinish(job.getId(), forecastIdDefaultDurationDefaultExpiry);
+        waitForecastToFinish(job.getId(), forecastIdDuration1HourNoExpiry);
+        closeJob(job.getId());
+
+        {
+            ForecastRequestStats forecastStats = getForecastStats(job.getId(), forecastIdDefaultDurationDefaultExpiry);
+            assertNotNull(forecastStats);
+            ForecastRequestStats otherStats = getForecastStats(job.getId(), forecastIdDuration1HourNoExpiry);
+            assertNotNull(otherStats);
+        }
+
+        {
+            DeleteForecastAction.Request request = new DeleteForecastAction.Request(job.getId(),
+                forecastIdDefaultDurationDefaultExpiry + "," + forecastIdDuration1HourNoExpiry);
+            AcknowledgedResponse response = client().execute(DeleteForecastAction.INSTANCE, request).actionGet();
+            assertTrue(response.isAcknowledged());
+        }
+
+        {
+            ForecastRequestStats forecastStats = getForecastStats(job.getId(), forecastIdDefaultDurationDefaultExpiry);
+            assertNull(forecastStats);
+            ForecastRequestStats otherStats = getForecastStats(job.getId(), forecastIdDuration1HourNoExpiry);
+            assertNull(otherStats);
+        }
+
+        {
+            DeleteForecastAction.Request request = new DeleteForecastAction.Request(job.getId(), "forecast-does-not-exist");
+            ElasticsearchException e = expectThrows(ElasticsearchException.class,
+                () -> client().execute(DeleteForecastAction.INSTANCE, request).actionGet());
+            assertThat(e.getMessage(),
+                equalTo("No forecast(s) [forecast-does-not-exist] exists for job [forecast-it-test-delete]"));
+        }
+
+        {
+            DeleteForecastAction.Request request = new DeleteForecastAction.Request(job.getId(), MetaData.ALL);
+            AcknowledgedResponse response = client().execute(DeleteForecastAction.INSTANCE, request).actionGet();
+            assertTrue(response.isAcknowledged());
+        }
+
+        {
+            Job.Builder otherJob = new Job.Builder("forecasts-delete-with-all-and-allow-no-forecasts");
+            otherJob.setAnalysisConfig(analysisConfig);
+            otherJob.setDataDescription(dataDescription);
+
+            registerJob(otherJob);
+            putJob(otherJob);
+            DeleteForecastAction.Request request = new DeleteForecastAction.Request(otherJob.getId(), MetaData.ALL);
+            AcknowledgedResponse response = client().execute(DeleteForecastAction.INSTANCE, request).actionGet();
+            assertTrue(response.isAcknowledged());
+        }
+
+        {
+            Job.Builder otherJob = new Job.Builder("forecasts-delete-with-all-and-not-allow-no-forecasts");
+            otherJob.setAnalysisConfig(analysisConfig);
+            otherJob.setDataDescription(dataDescription);
+
+            registerJob(otherJob);
+            putJob(otherJob);
+
+            DeleteForecastAction.Request request = new DeleteForecastAction.Request(otherJob.getId(), MetaData.ALL);
+            request.setAllowNoForecasts(false);
+            ElasticsearchException e = expectThrows(ElasticsearchException.class,
+                () -> client().execute(DeleteForecastAction.INSTANCE, request).actionGet());
+            assertThat(e.getMessage(),
+                equalTo("No forecast(s) [_all] exists for job [forecasts-delete-with-all-and-not-allow-no-forecasts]"));
+        }
+    }
+
     private void createDataWithLotsOfClientIps(TimeValue bucketSpan, Job.Builder job) throws IOException {
         long now = Instant.now().getEpochSecond();
         long timestamp = now - 15 * bucketSpan.seconds();
 
+        List<String> data = new ArrayList<>();
         for (int h = 0; h < 15; h++) {
+            double value = 10.0 + h;
             for (int i = 1; i < 101; i++) {
-                List<String> data = new ArrayList<>();
                 for (int j = 1; j < 81; j++) {
-                    Map<String, Object> record = new HashMap<>();
-                    record.put("time", timestamp);
-                    record.put("value", 10.0 + h);
-                    record.put("clientIP", String.format(Locale.ROOT, "192.168.%d.%d", i, j));
-                    data.add(createJsonRecord(record));
+                    String json = String.format(Locale.ROOT, "{\"time\": %d, \"value\": %f, \"clientIP\": \"192.168.%d.%d\"}\n",
+                            timestamp, value, i, j);
+                    data.add(json);
                 }
-                postData(job.getId(), data.stream().collect(Collectors.joining()));
             }
             timestamp += bucketSpan.seconds();
         }
+
+        postData(job.getId(), data.stream().collect(Collectors.joining()));
         flushJob(job.getId(), false);
     }
 

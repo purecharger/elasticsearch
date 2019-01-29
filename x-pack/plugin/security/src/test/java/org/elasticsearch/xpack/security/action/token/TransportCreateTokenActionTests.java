@@ -28,7 +28,6 @@ import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.node.Node;
-import org.elasticsearch.protocol.xpack.security.User;
 import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.TestThreadPool;
@@ -40,6 +39,7 @@ import org.elasticsearch.xpack.core.security.action.token.CreateTokenRequest;
 import org.elasticsearch.xpack.core.security.action.token.CreateTokenResponse;
 import org.elasticsearch.xpack.core.security.authc.Authentication;
 import org.elasticsearch.xpack.core.security.authc.support.UsernamePasswordToken;
+import org.elasticsearch.xpack.core.security.user.User;
 import org.elasticsearch.xpack.security.authc.AuthenticationService;
 import org.elasticsearch.xpack.security.authc.TokenService;
 import org.elasticsearch.xpack.security.support.SecurityIndexManager;
@@ -148,7 +148,7 @@ public class TransportCreateTokenActionTests extends ESTestCase {
         Authentication authentication = new Authentication(new User("joe"), new Authentication.RealmRef("realm", "type", "node"), null);
         authentication.writeToContext(threadPool.getThreadContext());
 
-        final TransportCreateTokenAction action = new TransportCreateTokenAction(SETTINGS, threadPool,
+        final TransportCreateTokenAction action = new TransportCreateTokenAction(threadPool,
             mock(TransportService.class), new ActionFilters(Collections.emptySet()), tokenService,
             authenticationService);
         final CreateTokenRequest createTokenRequest = new CreateTokenRequest();
@@ -172,7 +172,7 @@ public class TransportCreateTokenActionTests extends ESTestCase {
         Authentication authentication = new Authentication(new User("joe"), new Authentication.RealmRef("realm", "type", "node"), null);
         authentication.writeToContext(threadPool.getThreadContext());
 
-        final TransportCreateTokenAction action = new TransportCreateTokenAction(SETTINGS, threadPool,
+        final TransportCreateTokenAction action = new TransportCreateTokenAction(threadPool,
             mock(TransportService.class), new ActionFilters(Collections.emptySet()), tokenService,
             authenticationService);
         final CreateTokenRequest createTokenRequest = new CreateTokenRequest();

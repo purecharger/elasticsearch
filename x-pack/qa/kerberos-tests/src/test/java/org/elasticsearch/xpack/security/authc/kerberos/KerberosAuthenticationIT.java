@@ -79,7 +79,7 @@ public class KerberosAuthenticationIT extends ESRestTestCase {
                         .endObject() // "rules"
                         .endObject());
 
-        final Request request = new Request("POST", "/_xpack/security/role_mapping/kerberosrolemapping");
+        final Request request = new Request("POST", "/_security/role_mapping/kerberosrolemapping");
         request.setJsonEntity(json);
         final Response response = adminClient().performRequest(request);
         assertOK(response);
@@ -103,10 +103,6 @@ public class KerberosAuthenticationIT extends ESRestTestCase {
         executeRequestAndVerifyResponse(userPrincipalName, callbackHandler);
     }
 
-    public void testSoDoesNotFailWithNoTests() {
-        // intentionally empty - this is just needed to ensure the build does not fail because we mute its only test.
-    }
-
     @Override
     @SuppressForbidden(reason = "SPNEGO relies on hostnames and we need to ensure host isn't a IP address")
     protected HttpHost buildHttpHost(String host, int port) {
@@ -121,7 +117,7 @@ public class KerberosAuthenticationIT extends ESRestTestCase {
 
     private void executeRequestAndVerifyResponse(final String userPrincipalName,
             final SpnegoHttpClientConfigCallbackHandler callbackHandler) throws PrivilegedActionException, IOException {
-        final Request request = new Request("GET", "/_xpack/security/_authenticate");
+        final Request request = new Request("GET", "/_security/_authenticate");
         try (RestClient restClient = buildRestClientForKerberos(callbackHandler)) {
             final AccessControlContext accessControlContext = AccessController.getContext();
             final LoginContext lc = callbackHandler.login();

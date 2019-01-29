@@ -19,16 +19,16 @@ import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.test.ESTestCase;
-import org.elasticsearch.transport.TcpTransport;
 import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportRequest;
+import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.xpack.core.security.SecurityContext;
 import org.elasticsearch.xpack.core.security.authc.Authentication;
 import org.elasticsearch.xpack.core.security.authc.Authentication.RealmRef;
 import org.elasticsearch.xpack.core.security.authz.permission.Role;
 import org.elasticsearch.xpack.core.security.authz.store.ReservedRolesStore;
 import org.elasticsearch.xpack.core.security.user.SystemUser;
-import org.elasticsearch.protocol.xpack.security.User;
+import org.elasticsearch.xpack.core.security.user.User;
 import org.elasticsearch.xpack.core.security.user.XPackUser;
 import org.elasticsearch.xpack.security.authc.AuthenticationService;
 import org.elasticsearch.xpack.security.authz.AuthorizationService;
@@ -65,7 +65,7 @@ public class ServerTransportFilterTests extends ESTestCase {
         authcService = mock(AuthenticationService.class);
         authzService = mock(AuthorizationService.class);
         channel = mock(TransportChannel.class);
-        when(channel.getProfileName()).thenReturn(TcpTransport.DEFAULT_PROFILE);
+        when(channel.getProfileName()).thenReturn(TransportSettings.DEFAULT_PROFILE);
         when(channel.getVersion()).thenReturn(Version.CURRENT);
         failDestructiveOperations = randomBoolean();
         Settings settings = Settings.builder()
